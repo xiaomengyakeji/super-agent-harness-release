@@ -1,0 +1,43 @@
+name: Upload v0.1.61 assets
+on:
+  workflow_dispatch:
+permissions:
+  contents: write
+jobs:
+  upload:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download and verify assets
+        run: |
+          set -euo pipefail
+          curl -L --fail --retry 3 -o win.exe "https://aka.doubaocdn.com/s/UcyDBjBLPA"
+          curl -L --fail --retry 3 -o mac.dmg "https://aka.doubaocdn.com/s/whYwCmBCRd"
+          echo "17d8939503cd04c704a785517c36e0d9c97f93b858454e7b27a104ef3d5dce70  win.exe" | sha256sum -c -
+          echo "dd062b3cd5ca3482e376003e7cd4fbd298d7066cbd6e91ca416a3ed839a92f83  mac.dmg" | sha256sum -c -
+          ls -lh win.exe mac.dmg
+      - name: Upload to release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+          TAG: v0.1.61
+        run: |
+          set -euo pipefail
+          ID=$(gh api "repos/$REPO/releases?per_page=100" -q ".[] | select(.tag_name==\"$TAG\") | .id" | head -n1)
+          if [ -z "$ID" ]; then echo "Release $TAG not found"; exit 1; fi
+          echo "release id=$ID"
+          for spec in "win.exe:super-agent-harness-0.1.61-win-x64-setup.exe" "mac.dmg:super-agent-harness-0.1.61-arm64.dmg"; do
+            FILE="${spec%%:*}"
+            NAME="${spec#*:}"
+            OLD=$(gh api "repos/$REPO/releases/$ID/assets?per_page=100" -q ".[] | select(.name==\"$NAME\") | .id")
+            if [ -n "$OLD" ]; then
+              for asset_id in $OLD; do gh api -X DELETE "repos/$REPO/releases/assets/$asset_id"; done
+            fi
+            echo "uploading $NAME"
+            curl -L --fail --retry 3 -X POST -H "Authorization: Bearer $GH_TOKEN" -H "Content-Type: application/octet-stream" -H "Accept: application/vnd.github+json" --data-binary "@$FILE" "https://uploads.github.com/repos/$REPO/releases/$ID/assets?name=$NAME"
+          done
+      - name: List assets
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+        run: |
+          gh api "repos/$REPO/releases?per_page=100" -q '.[] | select(.tag_name=="v0.1.61") | .assets[] | [.name, .size, .state] | @tsv'
